@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Hebrew/English Layout Fixer",
+  "version": "1.0.0",
+  "description": "Fix text typed in the wrong keyboard layout (Hebrew <-> English QWERTY) in place.",
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Fix keyboard layout"
+  },
+  "permissions": ["activeTab", "scripting"]
+}
