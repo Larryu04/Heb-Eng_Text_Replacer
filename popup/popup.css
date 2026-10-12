@@ -1,13 +1,38 @@
 body {
-  width: 220px;
+  width: 260px;
   margin: 0;
   padding: 12px;
   font: 14px system-ui, sans-serif;
   background: #fff;
   color: #1f2328;
 }
+[hidden] { display: none !important; }
 h1 { font-size: 15px; margin: 0 0 4px; }
-.hint { margin: 0 0 10px; font-size: 12px; color: #59636e; }
+.hint { display: block; margin: 0 0 10px; font-size: 12px; color: #59636e; }
+label.hint { margin-bottom: 4px; }
+.warning {
+  margin: 0 0 10px;
+  padding: 6px 8px;
+  font-size: 12px;
+  border-radius: 6px;
+  background: #fff8c5;
+  color: #6f4e00;
+}
+textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  margin-bottom: 8px;
+  padding: 6px;
+  font: 13px system-ui, sans-serif;
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  background: inherit;
+  color: inherit;
+  resize: vertical;
+}
+.row { display: flex; gap: 6px; }
+.row button { font-size: 12px; }
 button {
   display: block;
   width: 100%;
@@ -22,6 +47,8 @@ button {
 }
 button:hover { background: #0550ae; }
 button:disabled { opacity: .6; cursor: default; }
+button.secondary { background: transparent; color: #0969da; }
+button.secondary:hover { background: #ddf4ff; }
 #status { min-height: 1.2em; margin: 4px 0 0; font-size: 12px; }
 #status.error { color: #cf222e; }
 #status.ok { color: #1a7f37; }
@@ -29,6 +56,10 @@ button:disabled { opacity: .6; cursor: default; }
 @media (prefers-color-scheme: dark) {
   body { background: #1f2328; color: #e6edf3; }
   .hint { color: #9198a1; }
+  .warning { background: #3b2e00; color: #f2cc60; }
+  textarea { border-color: #3d444d; }
+  button.secondary { color: #4493f8; border-color: #4493f8; }
+  button.secondary:hover { background: #12263f; }
   #status.error { color: #ff7b72; }
   #status.ok { color: #3fb950; }
 }

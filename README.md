@@ -13,6 +13,7 @@ Typed `akuo` when you meant `שלום`? Select it, click the extension, choose *
 - **Undo-friendly:** uses `document.execCommand('insertText')`, so Ctrl+Z still works.
 - **Works with web frameworks:** if needed, it falls back to setting the value directly and sending `input`/`change` events so React, Angular, and similar apps notice the change.
 - **Frames and shadow DOM:** works inside iframes and open shadow roots.
+- **Fallback mode:** on sites where in-place editing can't work (Google Docs, Figma, browser code editors…), or when a replacement fails, the popup switches to a text box: paste the text, convert it, and the result is copied to your clipboard.
 - **Minimal permissions:** only `activeTab` and `scripting`. The extension can't read any page until you click its icon.
 
 ## Installation (unpacked)
@@ -50,24 +51,31 @@ Based on the standard Israeli (SI-1452) Hebrew keyboard layout.
 ```
 ├── manifest.json        # Manifest V3 configuration
 ├── src/
-│   └── keymap.js        # Key mapping and convert() function
+│   ├── keymap.js        # Key mapping and convert() function
+│   ├── blocklist.js     # Sites that always use fallback mode
+│   └── replacer.js      # Injected into the page; replaces the selection and reports success/failure
 └── popup/
-    ├── popup.html       # Popup with the two buttons
+    ├── popup.html       # In-place buttons + fallback (paste/convert/copy) view
     ├── popup.css        # Popup styles (light/dark)
-    └── popup.js         # Runs the conversion on the page and replaces the text
+    └── popup.js         # Blocklist check, runs replacer.js, switches to fallback on failure
 ```
 
 ## How it works
 
-1. When you click a button, `popup.js` loads `src/keymap.js` into the active tab (all frames).
-2. It then runs `replaceSelection()` in the page:
+1. When the popup opens, it checks the tab's URL against `src/blocklist.js`. Blocklisted and restricted pages go straight to fallback mode.
+2. When you click a button, `popup.js` loads `src/keymap.js` and `src/replacer.js` into the active tab (all frames).
+3. It then runs `HebEngReplacer.replaceSelection()` in each frame:
    - **Inputs / textareas:** reads `selectionStart`/`selectionEnd`, converts the selected part, and inserts it with `execCommand('insertText')`. If that fails, it sets the value directly and sends `input`/`change` events.
    - **contenteditable:** saves the selection, focuses the editor, restores the selection, and inserts with `execCommand('insertText')`. If that fails, it edits the page directly and sends `beforeinput`/`input` events.
+   - Before editing, it refuses selections inside code editors (Monaco, CodeMirror, Ace), in hidden or tiny keystroke-capture elements, or shorter than 2 characters. Afterwards, it checks that the new text is really there.
+   - Each frame returns `{ ok: true, count }` or `{ ok: false, reason, text? }`.
+4. If no frame succeeded (or `count` is 1 or less), the popup shows the fallback view with a message for that reason, prefilled with the selected text when there is one.
 
 ## Limitations
 
 - It can't run on restricted pages such as `chrome://`, `brave://`, or the Chrome Web Store.
-- It only converts text inside editable fields, not static page text.
+- It only converts text in place inside editable fields. Selected static page text opens in fallback mode instead.
+- A single selected character is never converted in place. Use fallback mode for that.
 - `[` and `]` are left unmapped on purpose. The Hebrew layout swaps these brackets because Hebrew is written right to left, so mapping them would cause more confusion than it fixes.
 
 ## Development

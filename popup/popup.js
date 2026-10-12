@@ -1,10 +1,58 @@
 const statusEl = document.getElementById("status");
+const inplaceView = document.getElementById("inplace-view");
+const fallbackView = document.getElementById("fallback-view");
+const fallbackWarning = document.getElementById("fallback-warning");
+const fallbackInput = document.getElementById("fallback-input");
+const fallbackResult = document.getElementById("fallback-result");
+const fallbackOutput = document.getElementById("fallback-output");
+const copyBtn = document.getElementById("copy-btn");
 const buttons = document.querySelectorAll("button[data-direction]");
+
+const UNSUPPORTED = "In-place replacement is not supported on this site.";
+
+// Failure reasons reported by src/replacer.js, most specific first. When
+// several frames fail, the most specific reason is the one shown.
+const REASONS = {
+  "hidden-target": UNSUPPORTED,
+  "code-editor": "In-place replacement is not supported in code editors.",
+  "verify-failed": "Couldn't confirm the text was replaced. If it didn't change, convert it here.",
+  "too-short": "Only one character was selected. Select the whole text, or convert it here.",
+  "not-editable": "The selected text isn't in an editable field.",
+  "no-selection": "No text selected in an editable field."
+};
+const REASON_ORDER = Object.keys(REASONS);
 
 function setStatus(text, kind) {
   statusEl.textContent = text;
   statusEl.className = kind || "";
 }
+
+// Swap the in-place buttons for the paste-convert-copy UI.
+function showFallback(message, prefill) {
+  inplaceView.hidden = true;
+  fallbackView.hidden = false;
+  fallbackWarning.textContent = message;
+  if (prefill) fallbackInput.value = prefill;
+  setStatus("");
+  fallbackInput.focus();
+}
+
+async function getActiveTab() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  return tab;
+}
+
+// Blocklisted or restricted (chrome://, Web Store, ...) pages skip straight to
+// the fallback. tab.url is readable here because activeTab was just granted.
+async function init() {
+  const tab = await getActiveTab();
+  const url = (tab && tab.url) || "";
+  if (!/^(https?|file):/.test(url) || HebEngBlocklist.isBlocked(url)) {
+    showFallback(UNSUPPORTED);
+  }
+}
+
+// --- In-place mode ---
 
 buttons.forEach((btn) =>
   btn.addEventListener("click", () => run(btn.dataset.direction))
@@ -14,117 +62,77 @@ async function run(direction) {
   buttons.forEach((b) => (b.disabled = true));
   setStatus("");
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await getActiveTab();
     const target = { tabId: tab.id, allFrames: true };
 
-    // Load the keymap into the page's isolated world, then run the replacer.
-    await chrome.scripting.executeScript({ target, files: ["src/keymap.js"] });
+    // Load the keymap and replacer into the page's isolated world, then run it.
+    await chrome.scripting.executeScript({
+      target, files: ["src/keymap.js", "src/replacer.js"]
+    });
     const results = await chrome.scripting.executeScript({
       target,
-      func: replaceSelection,
+      func: (dir) => globalThis.HebEngReplacer.replaceSelection(dir),
       args: [direction]
     });
 
-    const done = results.find((r) => r.result && r.result.ok);
-    if (done) {
-      setStatus("Replaced " + done.result.count + " character(s).", "ok");
+    const outcome = pickOutcome(results.map((r) => r.result));
+    // Sanity check: a real fix touches more than one character.
+    if (outcome.ok && outcome.count > 1) {
+      setStatus("Replaced " + outcome.count + " character(s).", "ok");
       setTimeout(() => window.close(), 600);
     } else {
-      setStatus("No text selected in an editable field.", "error");
+      showFallback(REASONS[outcome.reason] || UNSUPPORTED, outcome.text);
     }
   } catch (err) {
-    // e.g. chrome:// pages, the Web Store, or other restricted URLs.
-    setStatus("Can't run on this page.", "error");
+    // e.g. pages the extension isn't allowed to script.
     console.error(err);
+    showFallback(UNSUPPORTED);
   } finally {
     buttons.forEach((b) => (b.disabled = false));
   }
 }
 
-// Runs inside the page (once per frame). Must be self-contained: it can only
-// use its arguments and globals from the page's isolated world (HebEngKeymap).
-function replaceSelection(direction) {
-  const convert = (t) => globalThis.HebEngKeymap.convert(t, direction);
-  const TEXT_INPUT_TYPES = ["text", "search", "url", "tel", "email", "password", ""];
-
-  // Find the deepest focused element, descending into open shadow roots.
-  let el = document.activeElement;
-  while (el && el.shadowRoot && el.shadowRoot.activeElement) {
-    el = el.shadowRoot.activeElement;
-  }
-
-  // --- <input> / <textarea> ---
-  const isTextField =
-    el instanceof HTMLTextAreaElement ||
-    (el instanceof HTMLInputElement && TEXT_INPUT_TYPES.includes(el.type));
-
-  if (isTextField) {
-    const start = el.selectionStart;
-    const end = el.selectionEnd;
-    if (start == null || start === end) return { ok: false };
-
-    const original = el.value.slice(start, end);
-    const replacement = convert(original);
-    const expected = el.value.slice(0, start) + replacement + el.value.slice(end);
-
-    el.focus();
-    el.setSelectionRange(start, end);
-    // execCommand keeps the native undo stack and fires real input events.
-    let ok = false;
-    try { ok = document.execCommand("insertText", false, replacement); } catch (e) {}
-
-    if (!ok || el.value !== expected) {
-      // Fallback: use the native setter so React/Angular notice the change.
-      const proto = el instanceof HTMLTextAreaElement
-        ? HTMLTextAreaElement.prototype
-        : HTMLInputElement.prototype;
-      Object.getOwnPropertyDescriptor(proto, "value").set.call(el, expected);
-      el.dispatchEvent(new InputEvent("input", {
-        bubbles: true, inputType: "insertText", data: replacement
-      }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-    }
-    el.setSelectionRange(start, start + replacement.length);
-    return { ok: true, count: original.length };
-  }
-
-  // --- contenteditable ---
-  const sel = window.getSelection();
-  if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return { ok: false };
-
-  const range = sel.getRangeAt(0);
-  const node = range.commonAncestorContainer;
-  const host = (node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement)
-    ?.closest('[contenteditable=""], [contenteditable="true"], [contenteditable="plaintext-only"]');
-  if (!host || !host.isContentEditable) return { ok: false };
-
-  const original = sel.toString();
-  const replacement = convert(original);
-  const savedRange = range.cloneRange();
-
-  // Focusing can move the caret, so restore the saved selection afterwards.
-  host.focus();
-  sel.removeAllRanges();
-  sel.addRange(savedRange);
-
-  let ok = false;
-  try { ok = document.execCommand("insertText", false, replacement); } catch (e) {}
-
-  if (!ok) {
-    // Fallback: manual DOM edit plus events for framework-driven editors.
-    host.dispatchEvent(new InputEvent("beforeinput", {
-      bubbles: true, cancelable: true, inputType: "insertText", data: replacement
-    }));
-    savedRange.deleteContents();
-    const textNode = document.createTextNode(replacement);
-    savedRange.insertNode(textNode);
-    savedRange.setStartAfter(textNode);
-    savedRange.collapse(true);
-    sel.removeAllRanges();
-    sel.addRange(savedRange);
-    host.dispatchEvent(new InputEvent("input", {
-      bubbles: true, inputType: "insertText", data: replacement
-    }));
-  }
-  return { ok: true, count: original.length };
+// One result per frame: any success wins, otherwise the most specific failure.
+function pickOutcome(frameResults) {
+  const valid = frameResults.filter(Boolean);
+  const success = valid.find((r) => r.ok);
+  if (success) return success;
+  const rank = (r) => {
+    const i = REASON_ORDER.indexOf(r.reason);
+    return i === -1 ? REASON_ORDER.length : i;
+  };
+  valid.sort((a, b) => rank(a) - rank(b));
+  return valid[0] || { ok: false, reason: "no-selection" };
 }
+
+// --- Fallback mode ---
+
+document.querySelectorAll("button[data-fallback-direction]").forEach((btn) =>
+  btn.addEventListener("click", () => {
+    const text = fallbackInput.value;
+    if (!text) {
+      setStatus("Paste some text first.", "error");
+      fallbackInput.focus();
+      return;
+    }
+    fallbackOutput.value = HebEngKeymap.convert(text, btn.dataset.fallbackDirection);
+    fallbackResult.hidden = false;
+    copyResult();
+  })
+);
+
+copyBtn.addEventListener("click", copyResult);
+
+async function copyResult() {
+  try {
+    await navigator.clipboard.writeText(fallbackOutput.value);
+    setStatus("Copied! Paste it back into your document.", "ok");
+  } catch (err) {
+    // Clipboard can be refused if the popup lost focus; let the user copy by hand.
+    console.error(err);
+    fallbackOutput.select();
+    setStatus("Couldn't copy automatically. Press Ctrl+C.", "error");
+  }
+}
+
+init();

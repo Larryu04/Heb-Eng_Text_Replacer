@@ -6,10 +6,34 @@
 </head>
 <body>
   <h1>Fix keyboard layout</h1>
-  <p class="hint">Select the gibberish text on the page, then:</p>
-  <button id="en2he" data-direction="en2he">English to Hebrew</button>
-  <button id="he2en" data-direction="he2en">Hebrew to English</button>
+
+  <!-- Default view: convert the selection in place on the page. -->
+  <section id="inplace-view">
+    <p class="hint">Select the gibberish text on the page, then:</p>
+    <button data-direction="en2he">English to Hebrew</button>
+    <button data-direction="he2en">Hebrew to English</button>
+  </section>
+
+  <!-- Fallback view: shown when the site is blocklisted or in-place replacement fails. -->
+  <section id="fallback-view" hidden>
+    <p id="fallback-warning" class="warning" role="alert"></p>
+    <label for="fallback-input" class="hint">Paste the gibberish text here:</label>
+    <textarea id="fallback-input" dir="auto" rows="4" spellcheck="false"></textarea>
+    <div class="row">
+      <button data-fallback-direction="en2he">English to Hebrew</button>
+      <button data-fallback-direction="he2en">Hebrew to English</button>
+    </div>
+    <div id="fallback-result" hidden>
+      <label for="fallback-output" class="hint">Result:</label>
+      <textarea id="fallback-output" dir="auto" rows="4" readonly></textarea>
+      <button id="copy-btn" class="secondary">Copy to Clipboard</button>
+    </div>
+  </section>
+
   <p id="status" role="status"></p>
+
+  <script src="../src/keymap.js"></script>
+  <script src="../src/blocklist.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
