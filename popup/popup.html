@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <link rel="stylesheet" href="popup.css">
 </head>
-<body>
+<body class="loading">
   <h1>Fix keyboard layout</h1>
 
   <!-- Default view: convert the selection in place on the page. -->
@@ -14,7 +14,8 @@
     <button data-direction="he2en">Hebrew to English</button>
   </section>
 
-  <!-- Fallback view: shown when the site is blocklisted or in-place replacement fails. -->
+  <!-- Fallback view: only used in the standalone window, for pages where the
+       in-page overlay (src/overlay.js) can't be injected. -->
   <section id="fallback-view" hidden>
     <p id="fallback-warning" class="warning" role="alert"></p>
     <label for="fallback-input" class="hint">Paste the gibberish text here:</label>

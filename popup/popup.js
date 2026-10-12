@@ -15,8 +15,8 @@ const UNSUPPORTED = "In-place replacement is not supported on this site.";
 const REASONS = {
   "hidden-target": UNSUPPORTED,
   "code-editor": "In-place replacement is not supported in code editors.",
-  "verify-failed": "Couldn't confirm the text was replaced. If it didn't change, convert it here.",
-  "too-short": "Only one character was selected. Select the whole text, or convert it here.",
+  "verify-failed": "Couldn't confirm the text was replaced. If it didn't change, convert it below.",
+  "too-short": "Only one character was selected. Select the whole text on the page, then click Grab selection.",
   "not-editable": "The selected text isn't in an editable field.",
   "no-selection": "No text selected in an editable field."
 };
@@ -27,29 +27,52 @@ function setStatus(text, kind) {
   statusEl.className = kind || "";
 }
 
-// Swap the in-place buttons for the paste-convert-copy UI.
-function showFallback(message, prefill) {
-  inplaceView.hidden = true;
-  fallbackView.hidden = false;
-  fallbackWarning.textContent = message;
-  if (prefill) fallbackInput.value = prefill;
-  setStatus("");
-  fallbackInput.focus();
-}
-
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
 }
 
-// Blocklisted or restricted (chrome://, Web Store, ...) pages skip straight to
-// the fallback. tab.url is readable here because activeTab was just granted.
+// The popup closes as soon as the user clicks the page, so the fallback UI
+// can't live here. Inject it into the page as a floating panel instead; on
+// pages that can't be scripted, open the fallback in its own window.
+async function openFallback(tab, message, prefill) {
+  try {
+    const target = { tabId: tab.id }; // top frame only
+    await chrome.scripting.executeScript({
+      target, files: ["src/keymap.js", "src/overlay.js"]
+    });
+    await chrome.scripting.executeScript({
+      target,
+      func: (msg, text) => globalThis.HebEngOverlay.show(msg, text),
+      args: [message, prefill || ""]
+    });
+  } catch (err) {
+    // e.g. chrome://, brave://, the Web Store, or the PDF viewer.
+    console.error(err);
+    const params = new URLSearchParams({ standalone: "1", msg: message, text: prefill || "" });
+    await chrome.windows.create({
+      url: chrome.runtime.getURL("popup/popup.html?" + params),
+      type: "popup", width: 320, height: 460
+    });
+  }
+  window.close();
+}
+
+// Blocklisted or restricted pages skip straight to the fallback. tab.url is
+// readable here because activeTab was just granted.
 async function init() {
+  const params = new URLSearchParams(location.search);
+  if (params.has("standalone")) {
+    showStandaloneFallback(params.get("msg") || UNSUPPORTED, params.get("text"));
+    return;
+  }
   const tab = await getActiveTab();
   const url = (tab && tab.url) || "";
   if (!/^(https?|file):/.test(url) || HebEngBlocklist.isBlocked(url)) {
-    showFallback(UNSUPPORTED);
+    await openFallback(tab, UNSUPPORTED);
+    return;
   }
+  document.body.classList.remove("loading");
 }
 
 // --- In-place mode ---
@@ -61,8 +84,8 @@ buttons.forEach((btn) =>
 async function run(direction) {
   buttons.forEach((b) => (b.disabled = true));
   setStatus("");
+  const tab = await getActiveTab();
   try {
-    const tab = await getActiveTab();
     const target = { tabId: tab.id, allFrames: true };
 
     // Load the keymap and replacer into the page's isolated world, then run it.
@@ -81,12 +104,12 @@ async function run(direction) {
       setStatus("Replaced " + outcome.count + " character(s).", "ok");
       setTimeout(() => window.close(), 600);
     } else {
-      showFallback(REASONS[outcome.reason] || UNSUPPORTED, outcome.text);
+      await openFallback(tab, REASONS[outcome.reason] || UNSUPPORTED, outcome.text);
     }
   } catch (err) {
     // e.g. pages the extension isn't allowed to script.
     console.error(err);
-    showFallback(UNSUPPORTED);
+    await openFallback(tab, UNSUPPORTED);
   } finally {
     buttons.forEach((b) => (b.disabled = false));
   }
@@ -105,7 +128,17 @@ function pickOutcome(frameResults) {
   return valid[0] || { ok: false, reason: "no-selection" };
 }
 
-// --- Fallback mode ---
+// --- Standalone fallback window (pages the overlay can't be injected into) ---
+
+function showStandaloneFallback(message, prefill) {
+  document.body.classList.remove("loading");
+  document.body.classList.add("standalone");
+  inplaceView.hidden = true;
+  fallbackView.hidden = false;
+  fallbackWarning.textContent = message;
+  if (prefill) fallbackInput.value = prefill;
+  fallbackInput.focus();
+}
 
 document.querySelectorAll("button[data-fallback-direction]").forEach((btn) =>
   btn.addEventListener("click", () => {
@@ -128,7 +161,7 @@ async function copyResult() {
     await navigator.clipboard.writeText(fallbackOutput.value);
     setStatus("Copied! Paste it back into your document.", "ok");
   } catch (err) {
-    // Clipboard can be refused if the popup lost focus; let the user copy by hand.
+    // Clipboard can be refused if the window lost focus; let the user copy by hand.
     console.error(err);
     fallbackOutput.select();
     setStatus("Couldn't copy automatically. Press Ctrl+C.", "error");

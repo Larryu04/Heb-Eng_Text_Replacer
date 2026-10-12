@@ -25,7 +25,7 @@
   function precheck(el, original) {
     if (el.closest(CODE_EDITOR_SELECTOR)) return { ok: false, reason: "code-editor", text: original };
     if (isHidden(el)) return { ok: false, reason: "hidden-target" };
-    if (original.length < MIN_LENGTH) return { ok: false, reason: "too-short", text: original };
+    if (original.length < MIN_LENGTH) return { ok: false, reason: "too-short" };
     return null;
   }
 
